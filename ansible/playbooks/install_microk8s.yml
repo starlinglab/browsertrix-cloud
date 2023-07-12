@@ -2,9 +2,9 @@
 # by default this playbook will add the ip address of your endpoint
 # pass '-e host_name="my-domain.example.edu"' for it to work best
 #
-- name: deploy microk8s 
+- name: deploy microk8s
   gather_facts: true
-  hosts: "{{ host_ip | default('inventory_hostname') }}"
+  hosts: all #"{{ host_ip | default('inventory_hostname') }}"
   remote_user: "{{ your_user }}"
   become: true
   vars_files:
@@ -86,6 +86,8 @@
         - snapd
         - fuse
         - udev
+        - git
+        - acl
       state: present
       update_cache: true
       cache_valid_time: "{{ microk8s_cache_valid_time }}"
@@ -281,6 +283,17 @@
       group: '{{ microk8s_user }}'
       mode: 0600
 
+  - name: synlink microk8 executable
+    file:
+      src: "/snap/bin/{{item}}"
+      dest: "/usr/bin/{{item}}"
+      state: link
+    loop:
+      - microk8s.enable
+      - microk8s.disable
+      - microk8s.status
+      - helm
+
   # ===========================================
   # Configure plugins
   - name: microk8s plugins | enable plugins
@@ -348,7 +361,7 @@
       - microk8s_plugins is defined
       - microk8s_plugins.dns is defined
       - (microk8s_plugins.dns | bool)
-  
+
   # ===========================================
   # deploy browsertrix
   - name: microk8s deploy | create browsertrix repo
@@ -361,6 +374,15 @@
       version: main
     tags:
       - helm_upgrade
+
+  - name: micork8s deploy | helm | configure values yaml
+    ansible.builtin.template:
+      src: ../../chart/values.yaml.j2
+      dest: "{{ browsertrix_cloud_home }}/chart/values.yaml"
+      mode: u+rw
+    tags:
+      - helm_upgrade
+
 
   - name: microk8s deploy | Make repos git safe
     ansible.builtin.command: git config --global --add safe.directory "{{ browsertrix_cloud_home }}"
