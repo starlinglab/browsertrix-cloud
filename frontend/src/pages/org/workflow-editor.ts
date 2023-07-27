@@ -40,7 +40,7 @@ import type {
   Tags,
   TagsChangeEvent,
 } from "../../components/tag-input";
-import type { CollectionsChangeEvent } from "./collections-add";
+import type { CollectionsChangeEvent } from "../../components/collections-add";
 import type {
   WorkflowParams,
   Profile,
@@ -76,6 +76,7 @@ type FormState = {
   primarySeedUrl: string;
   urlList: string;
   includeLinkedPages: boolean;
+  useSitemap: boolean;
   customIncludeUrlList: string;
   crawlTimeoutMinutes: number | null;
   behaviorTimeoutSeconds: number | null;
@@ -149,6 +150,7 @@ const getDefaultFormState = (): FormState => ({
   primarySeedUrl: "",
   urlList: "",
   includeLinkedPages: false,
+  useSitemap: true,
   customIncludeUrlList: "",
   crawlTimeoutMinutes: null,
   behaviorTimeoutSeconds: null,
@@ -427,9 +429,7 @@ export class CrawlConfigEditor extends LiteElement {
         primarySeedConfig = seeds[0];
         formState.primarySeedUrl = primarySeedConfig.url;
       }
-      if (
-        primarySeedConfig.include?.length
-      ) {
+      if (primarySeedConfig.include?.length) {
         formState.customIncludeUrlList = primarySeedConfig.include
           // Unescape regex
           .map((url) => url.replace(/(\\|\/\.\*)/g, ""))
@@ -442,6 +442,7 @@ export class CrawlConfigEditor extends LiteElement {
       if (additionalSeeds.length) {
         formState.urlList = mapSeedToUrl(additionalSeeds).join("\n");
       }
+      formState.useSitemap = seedsConfig.useSitemap;
     } else {
       // Treat "custom" like URL list
       formState.urlList = mapSeedToUrl(seeds).join("\n");
@@ -518,6 +519,7 @@ export class CrawlConfigEditor extends LiteElement {
       exclusions: seedsConfig.exclude,
       includeLinkedPages:
         Boolean(primarySeedConfig.extraHops || seedsConfig.extraHops) ?? true,
+      useSitemap: defaultFormState.useSitemap,
       pageLimit:
         this.initialWorkflow.config.limit ?? defaultFormState.pageLimit,
       autoscrollBehavior: this.initialWorkflow.config.behaviors
@@ -1115,6 +1117,18 @@ https://example.net`}
         Start URL Scope.`),
         false
       )}
+      ${this.renderFormCol(html`
+        <sl-checkbox
+          name="useSitemap"
+          ?checked=${this.formState.useSitemap}
+        >
+          ${msg("Check For Sitemap")}
+        </sl-checkbox>
+      `)}
+      ${this.renderHelpTextCol(
+        msg(`If checked, the crawler will check for a sitemap at /sitemap.xml and use it to discover pages to crawl if present.`),
+        false
+      )}
       <div class="col-span-5">
         <btrix-details ?open=${exclusions.length > 0}>
           <span slot="title"
@@ -1658,6 +1672,7 @@ https://archiveweb.page/images/${"logo.svg"}`}
             .initialCollections=${this.formState.autoAddCollections}
             .orgId=${this.orgId}
             .configId=${this.configId}
+            emptyText=${msg("Search for a Collection to auto-add crawls")}
             @collections-change=${(e: CollectionsChangeEvent) =>
               this.updateFormState(
                 {
@@ -2118,7 +2133,7 @@ https://archiveweb.page/images/${"logo.svg"}`}
 
   private parseUrlListConfig(): Pick<
     NewCrawlConfigParams["config"],
-    "seeds" | "scopeType" | "extraHops"
+    "seeds" | "scopeType" | "extraHops" | "useSitemap"
   > {
     const config = {
       seeds: urlListToArray(this.formState.urlList).map((seedUrl) => {
@@ -2127,6 +2142,7 @@ https://archiveweb.page/images/${"logo.svg"}`}
       }),
       scopeType: "page" as FormState["scopeType"],
       extraHops: this.formState.includeLinkedPages ? 1 : 0,
+      useSitemap: false,
     };
 
     return config;
@@ -2134,7 +2150,7 @@ https://archiveweb.page/images/${"logo.svg"}`}
 
   private parseSeededConfig(): Pick<
     NewCrawlConfigParams["config"],
-    "seeds" | "scopeType"
+    "seeds" | "scopeType" | "useSitemap"
   > {
     const primarySeedUrl = this.formState.primarySeedUrl;
     const includeUrlList = this.formState.customIncludeUrlList
@@ -2148,14 +2164,15 @@ https://archiveweb.page/images/${"logo.svg"}`}
       : [];
     const primarySeed: Seed = {
       url: primarySeedUrl,
-      // the 'custom' scope here indicates we have extra URLs, actually set to 'prefix' 
+      // the 'custom' scope here indicates we have extra URLs, actually set to 'prefix'
       // scope on backend to ensure seed URL is also added as part of standard prefix scope
-      scopeType: this.formState.scopeType === "custom" ? "prefix" : this.formState.scopeType,
+      scopeType:
+        this.formState.scopeType === "custom"
+          ? "prefix"
+          : this.formState.scopeType,
       include:
         this.formState.scopeType === "custom"
-          ? [
-              ...includeUrlList.map((url) => regexEscape(url)),
-            ]
+          ? [...includeUrlList.map((url) => regexEscape(url))]
           : [],
       extraHops: this.formState.includeLinkedPages ? 1 : 0,
     };
@@ -2167,6 +2184,7 @@ https://archiveweb.page/images/${"logo.svg"}`}
     const config = {
       seeds: [primarySeed, ...additionalSeedUrlList],
       scopeType: this.formState.scopeType,
+      useSitemap: this.formState.useSitemap,
     };
     return config;
   }

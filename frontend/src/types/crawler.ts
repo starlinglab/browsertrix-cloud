@@ -29,6 +29,7 @@ export type SeedConfig = Pick<
   pageExtraDelay: number | null;
   behaviors?: string | null;
   extraHops?: number | null;
+  useSitemap: boolean;
   depth?: number | null;
 };
 
@@ -118,7 +119,7 @@ export type Crawl = CrawlConfig & {
   fileCount?: number;
   fileSize?: number;
   completions?: number;
-  notes: string | null;
+  description: string | null;
   firstSeed: string;
   seedCount: number;
   stopping: boolean;

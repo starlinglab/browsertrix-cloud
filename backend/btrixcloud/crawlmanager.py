@@ -8,10 +8,8 @@ import base64
 
 from datetime import timedelta
 
-from .orgs import S3Storage
-
 from .k8sapi import K8sAPI
-
+from .models import S3Storage
 from .utils import dt_now, to_k8s_date
 
 
@@ -105,7 +103,7 @@ class CrawlManager(K8sAPI):
             STORAGE_NAME=storage_name,
             PROFILE_FILENAME=profile_filename,
             INITIAL_SCALE=str(crawlconfig.scale),
-            CRAWL_TIMEOUT=str(crawlconfig.crawlTimeout)
+            CRAWL_TIMEOUT=str(crawlconfig.crawlTimeout or 0)
             # REV=str(crawlconfig.rev),
         )
 

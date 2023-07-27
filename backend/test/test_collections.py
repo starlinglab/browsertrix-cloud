@@ -1,6 +1,9 @@
 import requests
 import os
 
+from zipfile import ZipFile, ZIP_STORED
+from tempfile import TemporaryFile
+
 from .conftest import API_PREFIX
 from .utils import read_in_chunks
 
@@ -98,6 +101,7 @@ def test_update_collection(
     assert data["description"] == DESCRIPTION
     assert data["crawlCount"] == 1
     assert data["pageCount"] > 0
+    assert data["totalSize"] > 0
     global modified
     modified = data["modified"]
     assert modified
@@ -172,6 +176,7 @@ def test_add_remove_crawl_from_collection(
     assert data["id"] == _coll_id
     assert data["crawlCount"] == 2
     assert data["pageCount"] > 0
+    assert data["totalSize"] > 0
     assert data["modified"] >= modified
     assert data["tags"] == ["wr-test-2", "wr-test-1"]
 
@@ -193,6 +198,7 @@ def test_add_remove_crawl_from_collection(
     assert data["id"] == _coll_id
     assert data["crawlCount"] == 0
     assert data["pageCount"] == 0
+    assert data["totalSize"] == 0
     assert data["modified"] >= modified
     assert data.get("tags", []) == []
 
@@ -220,6 +226,7 @@ def test_add_remove_crawl_from_collection(
     assert data["id"] == _coll_id
     assert data["crawlCount"] == 2
     assert data["pageCount"] > 0
+    assert data["totalSize"] > 0
     assert data["modified"] >= modified
     assert data["tags"] == ["wr-test-2", "wr-test-1"]
 
@@ -237,6 +244,7 @@ def test_get_collection(crawler_auth_headers, default_org_id):
     assert data["description"] == DESCRIPTION
     assert data["crawlCount"] == 2
     assert data["pageCount"] > 0
+    assert data["totalSize"] > 0
     assert data["modified"] >= modified
     assert data["tags"] == ["wr-test-2", "wr-test-1"]
 
@@ -256,6 +264,7 @@ def test_get_collection_replay(
     assert data["description"] == DESCRIPTION
     assert data["crawlCount"] == 2
     assert data["pageCount"] > 0
+    assert data["totalSize"] > 0
     assert data["modified"] >= modified
     assert data["tags"] == ["wr-test-2", "wr-test-1"]
 
@@ -292,6 +301,7 @@ def test_add_upload_to_collection(crawler_auth_headers, default_org_id):
     assert data["id"] == _coll_id
     assert data["crawlCount"] == 3
     assert data["pageCount"] > 0
+    assert data["totalSize"] > 0
     assert data["modified"]
     assert data["tags"] == ["wr-test-2", "wr-test-1"]
 
@@ -301,6 +311,28 @@ def test_add_upload_to_collection(crawler_auth_headers, default_org_id):
         headers=crawler_auth_headers,
     )
     assert _coll_id in r.json()["collections"]
+
+
+def test_download_streaming_collection(crawler_auth_headers, default_org_id):
+    # Add upload
+    with TemporaryFile() as fh:
+        with requests.get(
+            f"{API_PREFIX}/orgs/{default_org_id}/collections/{_coll_id}/download",
+            headers=crawler_auth_headers,
+            stream=True,
+        ) as r:
+            assert r.status_code == 200
+            for chunk in r.iter_content():
+                fh.write(chunk)
+
+        fh.seek(0)
+        with ZipFile(fh, "r") as zip_file:
+            contents = zip_file.namelist()
+
+            assert len(contents) == 4
+            for filename in contents:
+                assert filename.endswith(".wacz") or filename == "datapackage.json"
+                assert zip_file.getinfo(filename).compress_type == ZIP_STORED
 
 
 def test_list_collections(
@@ -323,6 +355,7 @@ def test_list_collections(
     assert first_coll["description"] == DESCRIPTION
     assert first_coll["crawlCount"] == 3
     assert first_coll["pageCount"] > 0
+    assert first_coll["totalSize"] > 0
     assert first_coll["modified"]
     assert first_coll["tags"] == ["wr-test-2", "wr-test-1"]
 
@@ -333,6 +366,7 @@ def test_list_collections(
     assert second_coll.get("description") is None
     assert second_coll["crawlCount"] == 1
     assert second_coll["pageCount"] > 0
+    assert second_coll["totalSize"] > 0
     assert second_coll["modified"]
     assert second_coll["tags"] == ["wr-test-2"]
 
@@ -349,6 +383,7 @@ def test_remove_upload_from_collection(crawler_auth_headers, default_org_id):
     assert data["id"] == _coll_id
     assert data["crawlCount"] == 2
     assert data["pageCount"] > 0
+    assert data["totalSize"] > 0
     assert data["modified"] >= modified
     assert data.get("tags") == ["wr-test-2", "wr-test-1"]
 
@@ -498,6 +533,46 @@ def test_filter_sort_collections(
 
     items = data["items"]
     assert items[0]["modified"] >= items[1]["modified"]
+
+    # Test sorting by size, ascending
+    r = requests.get(
+        f"{API_PREFIX}/orgs/{default_org_id}/collections?sortBy=totalSize",
+        headers=crawler_auth_headers,
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] == 2
+
+    items = data["items"]
+    assert items[0]["totalSize"] <= items[1]["totalSize"]
+
+    # Test sorting by size, descending
+    r = requests.get(
+        f"{API_PREFIX}/orgs/{default_org_id}/collections?sortBy=totalSize&sortDirection=-1",
+        headers=crawler_auth_headers,
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] == 2
+
+    items = data["items"]
+    assert items[0]["totalSize"] >= items[1]["totalSize"]
+
+    # Invalid sort value
+    r = requests.get(
+        f"{API_PREFIX}/orgs/{default_org_id}/collections?sortBy=invalid",
+        headers=crawler_auth_headers,
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"] == "invalid_sort_by"
+
+    # Invalid sort_direction value
+    r = requests.get(
+        f"{API_PREFIX}/orgs/{default_org_id}/collections?sortBy=modified&sortDirection=0",
+        headers=crawler_auth_headers,
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"] == "invalid_sort_direction"
 
 
 def test_delete_collection(crawler_auth_headers, default_org_id, crawler_crawl_id):
