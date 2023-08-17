@@ -296,6 +296,8 @@ class BaseCrawl(BaseMongoModel):
     started: datetime
     finished: Optional[datetime]
 
+    name: Optional[str]
+
     state: str
 
     stats: Optional[Dict[str, int]]
@@ -347,6 +349,7 @@ class CrawlOut(BaseMongoModel):
     collections: Optional[List[UUID4]] = []
 
     # automated crawl fields
+    config: Optional[RawCrawlConfig]
     cid: Optional[UUID4]
     name: Optional[str]
     firstSeed: Optional[str]
@@ -368,7 +371,9 @@ class CrawlOutWithResources(CrawlOut):
 class UpdateCrawl(BaseModel):
     """Update crawl"""
 
-    tags: Optional[List[str]] = []
+    name: Optional[str]
+    description: Optional[str]
+    tags: Optional[List[str]]
     description: Optional[str]
 
 
@@ -433,15 +438,12 @@ class UploadedCrawl(BaseCrawl):
 
     type: str = Field("upload", const=True)
 
-    name: str
     tags: Optional[List[str]] = []
 
 
 # ============================================================================
 class UpdateUpload(UpdateCrawl):
     """Update modal that also includes name"""
-
-    name: Optional[str]
 
 
 # ============================================================================
@@ -465,6 +467,8 @@ class Collection(BaseMongoModel):
     # Sorted by count, descending
     tags: Optional[List[str]] = []
 
+    isPublic: Optional[bool] = False
+
 
 # ============================================================================
 class CollIn(BaseModel):
@@ -473,6 +477,8 @@ class CollIn(BaseModel):
     name: str = Field(..., min_length=1)
     description: Optional[str]
     crawlIds: Optional[List[str]] = []
+
+    isPublic: Optional[bool] = False
 
 
 # ============================================================================
@@ -488,6 +494,7 @@ class UpdateColl(BaseModel):
 
     name: Optional[str]
     description: Optional[str]
+    isPublic: Optional[bool]
 
 
 # ============================================================================

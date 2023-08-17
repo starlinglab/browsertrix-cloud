@@ -33,7 +33,7 @@ const POLL_INTERVAL_SECONDS = 10;
 /**
  * Usage:
  * ```ts
- * <btrix-crawl-detail crawlsBaseUrl="/crawls"></btrix-crawl-detail>
+ * <btrix-crawl-detail></btrix-crawl-detail>
  * ```
  */
 @localized()
@@ -41,16 +41,14 @@ export class CrawlDetail extends LiteElement {
   @property({ type: Object })
   authState?: AuthState;
 
-  // e.g. `/org/${this.orgId}/crawls`
   @property({ type: String })
-  crawlsBaseUrl!: string;
-
-  // e.g. `/org/${this.orgId}/crawls`
-  @property({ type: String })
-  crawlsAPIBaseUrl?: string;
+  itemType: Crawl["type"] = null;
 
   @property({ type: String })
-  artifactType: Crawl["type"] = null;
+  collectionId?: string;
+
+  @property({ type: String })
+  workflowId?: string;
 
   @property({ type: Boolean })
   showOrgLink = false;
@@ -82,6 +80,20 @@ export class CrawlDetail extends LiteElement {
   @state()
   private isDialogVisible: boolean = false;
 
+  private get listUrl(): string {
+    let path = "items";
+    if (this.workflowId) {
+      path = `workflows/crawl/${this.workflowId}#crawls`;
+    } else if (this.collectionId) {
+      path = `collections/view/${this.collectionId}/items`;
+    } else if (this.crawl?.type === "upload") {
+      path = "items/upload";
+    } else if (this.crawl?.type === "crawl") {
+      path = "items/crawl";
+    }
+    return `/orgs/${this.orgId}/${path}`;
+  }
+
   // TODO localize
   private numberFormatter = new Intl.NumberFormat();
   private dateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -110,10 +122,6 @@ export class CrawlDetail extends LiteElement {
   }
 
   firstUpdated() {
-    if (!this.crawlsBaseUrl) {
-      throw new Error("Crawls base URL not defined");
-    }
-
     this.fetchCrawl();
     this.fetchCrawlLogs();
   }
@@ -149,19 +157,16 @@ export class CrawlDetail extends LiteElement {
   }
 
   render() {
+    const authToken = this.authState!.headers.Authorization.split(" ")[1];
     let sectionContent: string | TemplateResult = "";
 
     switch (this.sectionName) {
       case "replay":
-        sectionContent = this.renderPanel(
-          msg("Replay Crawl"),
-          this.renderReplay(),
-          {
-            "overflow-hidden": true,
-            "rounded-lg": true,
-            border: true,
-          }
-        );
+        sectionContent = this.renderPanel(msg("Replay"), this.renderReplay(), {
+          "overflow-hidden": true,
+          "rounded-lg": true,
+          border: true,
+        });
         break;
       case "files":
         sectionContent = this.renderPanel(
@@ -170,14 +175,36 @@ export class CrawlDetail extends LiteElement {
         );
         break;
       case "logs":
-        sectionContent = this.renderPanel(msg("Error Logs"), this.renderLogs());
+        sectionContent = this.renderPanel(
+          html`
+            ${this.renderTitle(msg("Error Logs"))}
+            ${when(
+              this.logs?.total,
+              () =>
+                html`<sl-button
+                  href=${`/api/orgs/${this.orgId}/crawls/${this.crawlId}/logs?auth_bearer=${authToken}`}
+                  download=${`btrix-${this.crawlId}-logs.txt`}
+                  size="small"
+                  variant="primary"
+                >
+                  <sl-icon slot="prefix" name="download"></sl-icon>
+                  ${msg("Download Logs")}</sl-button
+                >`
+            )}
+          `,
+          this.renderLogs()
+        );
         break;
       case "config":
-        sectionContent = this.renderPanel(msg("Config"), this.renderConfig(), {
-          "p-4": true,
-          "rounded-lg": true,
-          border: true,
-        });
+        sectionContent = this.renderPanel(
+          msg("Crawl Settings"),
+          this.renderConfig(),
+          {
+            "p-4": true,
+            "rounded-lg": true,
+            border: true,
+          }
+        );
         break;
       default:
         sectionContent = html`
@@ -192,7 +219,7 @@ export class CrawlDetail extends LiteElement {
             <div class="col-span-1 flex flex-col">
               ${this.renderPanel(
                 html`
-                  ${msg("Metadata")}
+                  ${this.renderTitle(msg("Metadata"))}
                   ${when(
                     this.isCrawler,
                     () => html`
@@ -228,33 +255,37 @@ export class CrawlDetail extends LiteElement {
         break;
     }
 
-    // TODO abstract into breadcrumbs
-    const isWorkflowArtifact = this.crawlsBaseUrl.includes("/workflows/");
+    let label = "";
+    if (this.workflowId) {
+      label = msg("Back to Crawl Workflow");
+    } else if (this.collectionId) {
+      label = msg("Back to Collection");
+    } else if (this.crawl) {
+      if (this.crawl.type === "upload") {
+        label = msg("Back to All Uploads");
+      } else if (this.crawl.type === "crawl") {
+        label = msg("Back to All Crawls");
+      } else {
+        label = msg("Back to Archived Items");
+      }
+    }
 
     return html`
       <div class="mb-7">
         <a
           class="text-neutral-500 hover:text-neutral-600 text-sm font-medium"
-          href="${this.crawlsBaseUrl}?artifactType=${this.crawl?.type}"
+          href=${this.listUrl}
           @click=${this.navLink}
         >
           <sl-icon
             name="arrow-left"
             class="inline-block align-middle"
           ></sl-icon>
-          <span class="inline-block align-middle"
-            >${isWorkflowArtifact
-              ? msg("Back to Crawl Workflow")
-              : this.crawl?.type === "upload"
-              ? msg("Back to All Uploads")
-              : msg("Back to All Crawls")}</span
-          >
+          <span class="inline-block align-middle">${label}</span>
         </a>
       </div>
 
       <div class="mb-4">${this.renderHeader()}</div>
-
-      <hr class="mb-4" />
 
       <main>
         <section class="grid grid-cols-6 gap-4">
@@ -352,7 +383,7 @@ export class CrawlDetail extends LiteElement {
             section: "replay",
             iconLibrary: "app",
             icon: "link-replay",
-            label: msg("Replay Crawl"),
+            label: msg("Replay"),
           })}
           ${renderNavItem({
             section: "files",
@@ -361,7 +392,7 @@ export class CrawlDetail extends LiteElement {
             label: msg("Files"),
           })}
           ${when(
-            this.artifactType === "crawl",
+            this.itemType === "crawl",
             () => html`
               ${renderNavItem({
                 section: "logs",
@@ -373,7 +404,7 @@ export class CrawlDetail extends LiteElement {
                 section: "config",
                 iconLibrary: "default",
                 icon: "file-code-fill",
-                label: msg("Config"),
+                label: msg("Crawl Settings"),
               })}
             `
           )}
@@ -384,8 +415,10 @@ export class CrawlDetail extends LiteElement {
 
   private renderHeader() {
     return html`
-      <header class="md:flex justify-between items-end">
-        <h1 class="text-xl font-semibold mb-4 md:mb-0 md:mr-2">
+      <header class="md:flex items-center gap-2 pb-3 mb-3 border-b">
+        <h1
+          class="flex-1 min-w-0 text-xl font-semibold leading-7 truncate mb-2 md:mb-0"
+        >
           ${this.renderName()}
         </h1>
         <div
@@ -449,7 +482,7 @@ export class CrawlDetail extends LiteElement {
             `
           )}
           ${when(
-            this.artifactType === "crawl",
+            this.itemType === "crawl",
             () => html`
               <sl-menu-item
                 @click=${() =>
@@ -496,14 +529,22 @@ export class CrawlDetail extends LiteElement {
     `;
   }
 
-  private renderPanel(title: any, content: any, classes: any = {}) {
+  private renderTitle(title: string) {
+    return html`<h2 class="text-lg font-semibold">${title}</h2>`;
+  }
+
+  private renderPanel(
+    heading: string | TemplateResult,
+    content: any,
+    classes: any = {}
+  ) {
+    const headingIsTitle = typeof heading === "string";
     return html`
-      <h2
-        id="exclusions"
-        class="flex-0 flex items-center justify-between text-lg font-semibold leading-none h-8 min-h-fit mb-2"
+      <header
+        class="flex-0 flex items-center justify-between leading-none h-8 min-h-fit mb-2"
       >
-        ${title}
-      </h2>
+        ${headingIsTitle ? this.renderTitle(heading) : heading}
+      </header>
       <div
         class=${classMap({
           "flex-1": true,
@@ -670,29 +711,6 @@ export class CrawlDetail extends LiteElement {
                 <code title=${this.crawl.id}>${this.crawl.id}</code> `
             : html`<sl-skeleton class="h-6"></sl-skeleton>`}
         </btrix-desc-list-item>
-        ${this.showOrgLink
-          ? html`
-              <btrix-desc-list-item label=${msg("Organization")}>
-                ${this.crawl
-                  ? html`
-                      <a
-                        class="font-medium text-neutral-700 hover:text-neutral-900"
-                        href=${`/orgs/${this.crawl.oid}/artifacts/crawls`}
-                        @click=${this.navLink}
-                      >
-                        <sl-icon
-                          class="inline-block align-middle"
-                          name="link-45deg"
-                        ></sl-icon>
-                        <span class="inline-block align-middle">
-                          ${msg("View Organization")}
-                        </span>
-                      </a>
-                    `
-                  : html`<sl-skeleton class="h-6"></sl-skeleton>`}
-              </btrix-desc-list-item>
-            `
-          : ""}
       </btrix-desc-list>
     `;
   }
@@ -840,12 +858,9 @@ ${this.crawl?.description}
   }
 
   private async getCrawl(): Promise<Crawl> {
-    const apiPath =
-      this.artifactType === "upload"
-        ? `/orgs/${this.orgId}/uploads/${this.crawlId}/replay.json`
-        : `${this.crawlsAPIBaseUrl || this.crawlsBaseUrl}/${
-            this.crawlId
-          }/replay.json`;
+    const apiPath = `/orgs/${this.orgId}/${
+      this.itemType === "upload" ? "uploads" : "crawls"
+    }/${this.crawlId}/replay.json`;
     const data: Crawl = await this.apiFetch(apiPath, this.authState!);
 
     return data;
@@ -854,7 +869,7 @@ ${this.crawl?.description}
   private async fetchCrawlLogs(
     params: Partial<APIPaginatedList> = {}
   ): Promise<void> {
-    if (this.artifactType !== "crawl") {
+    if (this.itemType !== "crawl") {
       return;
     }
     try {
@@ -875,9 +890,7 @@ ${this.crawl?.description}
     const pageSize = params.pageSize || this.logs?.pageSize || 50;
 
     const data: APIPaginatedList = await this.apiFetch(
-      `${this.crawlsAPIBaseUrl || this.crawlsBaseUrl}/${
-        this.crawlId
-      }/errors?page=${page}&pageSize=${pageSize}`,
+      `/orgs/${this.orgId}/crawls/${this.crawlId}/errors?page=${page}&pageSize=${pageSize}`,
       this.authState!
     );
 
@@ -937,50 +950,6 @@ ${this.crawl?.description}
     return !formEl.querySelector("[data-invalid]");
   }
 
-  private async runNow() {
-    if (!this.crawl) return;
-
-    try {
-      const data = await this.apiFetch(
-        `/orgs/${this.crawl.oid}/crawlconfigs/${this.crawl.cid}/run`,
-        this.authState!,
-        {
-          method: "POST",
-        }
-      );
-
-      if (data.started) {
-        this.navTo(`/orgs/${this.crawl.oid}/artifacts/crawl/${data.started}`);
-      }
-
-      this.notify({
-        message: msg(
-          html`Started crawl from <strong>${this.renderName()}</strong>.`
-        ),
-        variant: "success",
-        icon: "check2-circle",
-        duration: 8000,
-      });
-    } catch (e: any) {
-      if (e.isApiError && e.message === "crawl_already_running") {
-        this.notify({
-          message: msg(
-            html`Crawl of <strong>${this.renderName()}</strong> is already
-              running.`
-          ),
-          variant: "warning",
-          icon: "exclamation-triangle",
-        });
-      } else {
-        this.notify({
-          message: msg("Sorry, couldn't run crawl at this time."),
-          variant: "danger",
-          icon: "exclamation-octagon",
-        });
-      }
-    }
-  }
-
   private async deleteCrawl() {
     if (
       !window.confirm(
@@ -1004,7 +973,7 @@ ${this.crawl?.description}
         }
       );
 
-      this.navTo(this.crawlsBaseUrl);
+      this.navTo(this.listUrl);
       this.notify({
         message: msg(`Successfully deleted crawl`),
         variant: "success",

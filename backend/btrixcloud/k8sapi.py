@@ -13,6 +13,8 @@ from kubernetes_asyncio.client.api import custom_objects_api
 from kubernetes_asyncio.utils import create_from_dict
 from kubernetes_asyncio.client.exceptions import ApiException
 
+from redis import asyncio as aioredis
+
 from fastapi.templating import Jinja2Templates
 from .utils import get_templates_dir, dt_now, to_k8s_date
 
@@ -61,6 +63,12 @@ class K8sAPI:
             f"redis://{redis_id}-0.{redis_id}.{self.namespace}.svc.cluster.local/0"
         )
         return redis_url
+
+    async def get_redis_client(self, redis_url):
+        """return redis client with correct params for one-time use"""
+        return aioredis.from_url(
+            redis_url, decode_responses=True, auto_close_connection_pool=True
+        )
 
     # pylint: disable=too-many-arguments
     async def new_crawl_job(

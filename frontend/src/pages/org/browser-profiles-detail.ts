@@ -136,8 +136,10 @@ export class BrowserProfilesDetail extends LiteElement {
           </div>
           <div class="col-span-3 md:col-span-1">
             <dt class="text-sm text-0-600">
-              <span class="inline-block align-middle">${msg("Workflows")}</span>
-              <sl-tooltip content=${msg("Workflows using this profile")}>
+              <span class="inline-block align-middle"
+                >${msg("Crawl Workflows")}</span
+              >
+              <sl-tooltip content=${msg("Crawl workflows using this profile")}>
                 <sl-icon
                   class="inline-block align-middle"
                   name="info-circle"
@@ -269,7 +271,9 @@ export class BrowserProfilesDetail extends LiteElement {
   private renderMenu() {
     return html`
       <sl-dropdown placement="bottom-end" distance="4">
-        <sl-button size="small" slot="trigger" caret>${msg("Actions")}</sl-button>
+        <sl-button size="small" slot="trigger" caret
+          >${msg("Actions")}</sl-button
+        >
 
         <ul
           class="text-left text-sm text-neutral-800 bg-white whitespace-nowrap"

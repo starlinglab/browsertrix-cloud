@@ -255,7 +255,7 @@ export class WorkflowListItem extends LitElement {
       role="button"
       href=${`/orgs/${this.workflow?.oid}/workflows/crawl/${
         this.workflow?.id
-      }#${this.workflow?.isCrawlRunning ? "watch" : "artifacts"}`}
+      }#${this.workflow?.isCrawlRunning ? "watch" : "crawls"}`}
       @click=${async (e: MouseEvent) => {
         e.preventDefault();
         await this.updateComplete;
@@ -296,8 +296,7 @@ export class WorkflowListItem extends LitElement {
             (workflow) =>
               html`
                 <btrix-crawl-status
-                  state=${workflow.lastCrawlState ||
-                  msg("No Crawls Yet")}
+                  state=${workflow.lastCrawlState || msg("No Crawls Yet")}
                   ?stopping=${workflow.lastCrawlStopping}
                 ></btrix-crawl-status>
               `
@@ -334,7 +333,11 @@ export class WorkflowListItem extends LitElement {
       <div class="col">
         <div class="detail">
           ${this.safeRender((workflow) => {
-            if (workflow.isCrawlRunning && workflow.totalSize && workflow.lastCrawlSize) {
+            if (
+              workflow.isCrawlRunning &&
+              workflow.totalSize &&
+              workflow.lastCrawlSize
+            ) {
               return html`<sl-format-bytes
                   value=${workflow.totalSize}
                   display="narrow"
@@ -349,9 +352,9 @@ export class WorkflowListItem extends LitElement {
             }
             if (workflow.totalSize && workflow.lastCrawlSize) {
               return html`<sl-format-bytes
-                  value=${workflow.totalSize}
-                  display="narrow"
-                ></sl-format-bytes>`;
+                value=${workflow.totalSize}
+                display="narrow"
+              ></sl-format-bytes>`;
             }
             if (workflow.isCrawlRunning && workflow.lastCrawlSize) {
               return html`<span class="currCrawlSize">
@@ -550,8 +553,8 @@ export class WorkflowList extends LitElement {
 
   render() {
     return html` <div class="listHeader row">
-        <div class="col">${msg("Workflow Name & Last Updated")}</div>
-        <div class="col">${msg("Workflow Status")}</div>
+        <div class="col">${msg("Name & Last Updated")}</div>
+        <div class="col">${msg("Last Crawl Status")}</div>
         <div class="col">${msg("Total Size")}</div>
         <div class="col">${msg("Started By & Schedule")}</div>
         <div class="col action">

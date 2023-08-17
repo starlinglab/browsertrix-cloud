@@ -24,9 +24,9 @@ import { inactiveCrawlStates, isActive } from "../../utils/crawler";
 import { SlSelect } from "@shoelace-style/shoelace";
 import { DASHBOARD_ROUTE } from "../../routes";
 
-const SECTIONS = ["artifacts", "watch", "settings"] as const;
+const SECTIONS = ["crawls", "watch", "settings"] as const;
 type Tab = (typeof SECTIONS)[number];
-const DEFAULT_SECTION: Tab = "artifacts";
+const DEFAULT_SECTION: Tab = "crawls";
 const POLL_INTERVAL_SECONDS = 10;
 const ABORT_REASON_CANCLED = "canceled";
 
@@ -55,6 +55,9 @@ export class WorkflowDetail extends LiteElement {
 
   @property({ type: String })
   openDialogName?: "scale" | "exclusions" | "cancel" | "stop";
+
+  @property({ type: String })
+  initialActivePanel?: Tab;
 
   @state()
   private workflow?: Workflow;
@@ -112,14 +115,19 @@ export class WorkflowDetail extends LiteElement {
   };
 
   private readonly tabLabels: Record<Tab, string> = {
-    artifacts: msg("Crawls"),
+    crawls: msg("Crawls"),
     watch: msg("Watch Crawl"),
     settings: msg("Workflow Settings"),
   };
 
   connectedCallback(): void {
     // Set initial active section and dialog based on URL #hash value
-    this.getActivePanelFromHash();
+    if (this.initialActivePanel) {
+      this.activePanel = this.initialActivePanel;
+    } else {
+      this.getActivePanelFromHash();
+    }
+
     super.connectedCallback();
     window.addEventListener("hashchange", this.getActivePanelFromHash);
   }
@@ -168,7 +176,7 @@ export class WorkflowDetail extends LiteElement {
         });
       }
 
-      if (this.activePanel === "artifacts") {
+      if (this.activePanel === "crawls") {
         this.fetchCrawls();
       }
     }
@@ -197,7 +205,7 @@ export class WorkflowDetail extends LiteElement {
   }
 
   private async handleCrawlRunEnd() {
-    this.goToTab("artifacts", { replace: true });
+    this.goToTab("crawls", { replace: true });
     await this.fetchWorkflow();
 
     let notifyOpts = {
@@ -306,7 +314,7 @@ export class WorkflowDetail extends LiteElement {
           </div>
         </header>
 
-        <section class="col-span-1 border rounded-lg py-2 h-14">
+        <section class="col-span-1 border rounded-lg py-2">
           ${this.renderDetails()}
         </section>
 
@@ -416,13 +424,11 @@ export class WorkflowDetail extends LiteElement {
         </header>
       </btrix-observable>
 
-      ${this.renderTab("artifacts")}
+      ${this.renderTab("crawls")}
       ${this.renderTab("watch", { disabled: !this.lastCrawlId })}
       ${this.renderTab("settings")}
 
-      <btrix-tab-panel name="artifacts"
-        >${this.renderArtifacts()}</btrix-tab-panel
-      >
+      <btrix-tab-panel name="crawls">${this.renderCrawls()}</btrix-tab-panel>
       <btrix-tab-panel name="watch">
         ${until(
           this.getWorkflowPromise?.then(
@@ -447,7 +453,7 @@ export class WorkflowDetail extends LiteElement {
 
   private renderPanelHeader() {
     if (!this.activePanel) return;
-    if (this.activePanel === "artifacts") {
+    if (this.activePanel === "crawls") {
       return html`<h3>
         ${this.tabLabels[this.activePanel]}
         ${when(
@@ -480,11 +486,11 @@ export class WorkflowDetail extends LiteElement {
       return html` <h3>${this.tabLabels[this.activePanel]}</h3>
         <sl-button
           size="small"
-          ?disabled=${this.workflow?.isCrawlRunning}
+          ?disabled=${!this.workflow?.isCrawlRunning}
           @click=${() => (this.openDialogName = "scale")}
         >
           <sl-icon name="plus-slash-minus" slot="prefix"></sl-icon>
-          <span> ${msg("Edit Instances")} </span>
+          <span> ${msg("Edit Crawler Instances")} </span>
         </sl-button>`;
     }
 
@@ -683,7 +689,7 @@ export class WorkflowDetail extends LiteElement {
 
   private renderDetails() {
     return html`
-      <dl class="h-14 px-3 md:px-0 md:flex justify-evenly">
+      <btrix-desc-list horizontal>
         ${this.renderDetailItem(
           msg("Status"),
           () => html`
@@ -711,26 +717,20 @@ export class WorkflowDetail extends LiteElement {
               `
             : html`<span class="text-neutral-400">${msg("No Schedule")}</span>`
         )}
-        ${this.renderDetailItem(
-          msg("Created By"),
-          () =>
-            msg(
-              str`${
-                this.workflow!.createdByName
-              } on ${this.dateFormatter.format(
-                new Date(`${this.workflow!.created}Z`)
-              )}`
-            ),
-          true
+        ${this.renderDetailItem(msg("Created By"), () =>
+          msg(
+            str`${this.workflow!.createdByName} on ${this.dateFormatter.format(
+              new Date(`${this.workflow!.created}Z`)
+            )}`
+          )
         )}
-      </dl>
+      </btrix-desc-list>
     `;
   }
 
   private renderDetailItem(
     label: string | TemplateResult,
-    renderContent: () => any,
-    isLast = false
+    renderContent: () => any
   ) {
     return html`
       <btrix-desc-list-item label=${label}>
@@ -740,7 +740,6 @@ export class WorkflowDetail extends LiteElement {
           () => html`<sl-skeleton class="w-full"></sl-skeleton>`
         )}
       </btrix-desc-list-item>
-      ${when(!isLast, () => html`<hr class="flex-0 border-l w-0 h-10" />`)}
     `;
   }
 
@@ -766,7 +765,7 @@ export class WorkflowDetail extends LiteElement {
     );
   }
 
-  private renderArtifacts() {
+  private renderCrawls() {
     return html`
       <section>
         <div
@@ -813,9 +812,7 @@ export class WorkflowDetail extends LiteElement {
           </div>`
         )}
 
-        <btrix-crawl-list
-          baseUrl=${`/orgs/${this.orgId}/workflows/crawl/${this.workflowId}/artifact`}
-        >
+        <btrix-crawl-list workflowId=${this.workflowId}>
           <span slot="idCol">${msg("Start Time")}</span>
           ${when(
             this.crawls,
@@ -878,7 +875,7 @@ export class WorkflowDetail extends LiteElement {
     const skeleton = html`<sl-skeleton class="w-full"></sl-skeleton>`;
 
     return html`
-      <dl class="px-3 md:px-0 md:flex justify-evenly">
+      <btrix-desc-list horizontal>
         ${this.renderDetailItem(msg("Pages Crawled"), () =>
           this.lastCrawlStats
             ? msg(
@@ -906,12 +903,10 @@ export class WorkflowDetail extends LiteElement {
               ></sl-format-bytes>`
             : skeleton
         )}
-        ${this.renderDetailItem(
-          msg("Crawler Instances"),
-          () => (this.workflow ? this.workflow.scale : skeleton),
-          true
+        ${this.renderDetailItem(msg("Crawler Instances"), () =>
+          this.workflow ? this.workflow.scale : skeleton
         )}
-      </dl>
+      </btrix-desc-list>
     `;
   };
 
@@ -1004,9 +999,9 @@ export class WorkflowDetail extends LiteElement {
             () => html`
               <sl-button
                 class="mr-2"
-                href=${`/orgs/${this.orgId}/workflows/crawl/${
-                  this.workflowId
-                }/artifact/${this.workflow!.lastCrawlId}#replay`}
+                href=${`/orgs/${this.orgId}/items/crawl/${
+                  this.workflow!.lastCrawlId
+                }?workflowId=${this.workflowId}#replay`}
                 variant="primary"
                 size="small"
                 @click=${this.navLink}

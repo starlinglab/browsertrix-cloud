@@ -40,7 +40,7 @@ export class CollectionsNew extends LiteElement {
   }
 
   private renderHeader = () => html`
-    <nav class="mb-5">
+    <nav class="mb-7">
       <a
         class="text-gray-600 hover:text-gray-800 text-sm font-medium"
         href=${`/orgs/${this.orgId}/collections`}
@@ -59,19 +59,23 @@ export class CollectionsNew extends LiteElement {
     console.log("submit", e.detail.values);
 
     try {
+      const { name, description, crawlIds, isPublic } = e.detail.values;
       const data = await this.apiFetch(
         `/orgs/${this.orgId}/collections`,
         this.authState!,
         {
           method: "POST",
-          body: JSON.stringify(e.detail.values),
+          body: JSON.stringify({
+            name,
+            description,
+            crawlIds,
+            public: isPublic === "on",
+          }),
         }
       );
 
       this.notify({
-        message: msg(
-          str`Successfully created "${data.name}" Collection.`
-        ),
+        message: msg(str`Successfully created "${data.name}" Collection.`),
         variant: "success",
         icon: "check2-circle",
         duration: 8000,

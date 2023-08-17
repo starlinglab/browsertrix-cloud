@@ -21,6 +21,7 @@ import {
 import { when } from "lit/directives/when.js";
 import { msg, localized, str } from "@lit/localize";
 import type { SlMenu } from "@shoelace-style/shoelace";
+import queryString from "query-string";
 
 import type { Button } from "./button";
 import { RelativeDuration } from "./relative-duration";
@@ -184,6 +185,12 @@ export class CrawlListItem extends LitElement {
   @property({ type: String })
   baseUrl?: string;
 
+  @property({ type: String })
+  collectionId?: string;
+
+  @property({ type: String })
+  workflowId?: string;
+
   @query(".row")
   row!: HTMLElement;
 
@@ -220,15 +227,22 @@ export class CrawlListItem extends LitElement {
   }
 
   renderRow() {
-    const hash = this.crawl && isActive(this.crawl.state) ? "#watch" : "";
-    const artifactType = this.crawl?.type || "crawl";
     const typePath = this.crawl?.type === "upload" ? "upload" : "crawl";
+    const search =
+      this.collectionId || this.workflowId
+        ? `?${queryString.stringify(
+            {
+              collectionId: this.collectionId,
+              workflowId: this.workflowId,
+            },
+            { skipEmptyString: true }
+          )}`
+        : "";
     return html`<a
       class="item row"
       role="button"
-      href="${this.baseUrl || `/orgs/${this.crawl?.oid}/artifacts/${typePath}`}/${
-        this.crawl?.id
-      }"
+      href="${this.baseUrl ||
+      `/orgs/${this.crawl?.oid}/items/${typePath}`}/${this.crawl?.id}${search}"
       @click=${async (e: MouseEvent) => {
         e.preventDefault();
         await this.updateComplete;
@@ -345,36 +359,33 @@ export class CrawlListItem extends LitElement {
         </div>
       </div>
       <div class="col action">
-        <slot name="menuTrigger">
-          <btrix-button
-            class="dropdownTrigger"
-            label=${msg("Actions")}
-            icon
-            @click=${(e: MouseEvent) => {
-              // Prevent anchor link default behavior
-              e.preventDefault();
-              // Stop prop to anchor link
-              e.stopPropagation();
-              this.dropdownIsOpen = !this.dropdownIsOpen;
-            }}
-            @focusout=${(e: FocusEvent) => {
-              const relatedTarget = e.relatedTarget as HTMLElement;
-              if (relatedTarget) {
-                if (this.menuArr[0]?.contains(relatedTarget)) {
-                  // Keep dropdown open if moving to menu selection
-                  return;
-                }
-                if (this.row?.isEqualNode(relatedTarget)) {
-                  // Handle with click event
-                  return;
-                }
+        <sl-icon-button
+          class="dropdownTrigger"
+          label=${msg("Actions")}
+          name="three-dots-vertical"
+          @click=${(e: MouseEvent) => {
+            // Prevent anchor link default behavior
+            e.preventDefault();
+            // Stop prop to anchor link
+            e.stopPropagation();
+            this.dropdownIsOpen = !this.dropdownIsOpen;
+          }}
+          @focusout=${(e: FocusEvent) => {
+            const relatedTarget = e.relatedTarget as HTMLElement;
+            if (relatedTarget) {
+              if (this.menuArr[0]?.contains(relatedTarget)) {
+                // Keep dropdown open if moving to menu selection
+                return;
               }
-              this.dropdownIsOpen = false;
-            }}
-          >
-            <sl-icon name="three-dots-vertical"></sl-icon>
-          </btrix-button>
-        </slot>
+              if (this.row?.isEqualNode(relatedTarget)) {
+                // Handle with click event
+                return;
+              }
+            }
+            this.dropdownIsOpen = false;
+          }}
+        >
+        </sl-icon-button>
       </div>
     </a>`;
   }
@@ -511,7 +522,13 @@ export class CrawlList extends LitElement {
   baseUrl?: string;
 
   @property({ type: String })
-  artifactType: Crawl["type"] = null;
+  collectionId?: string;
+
+  @property({ type: String })
+  workflowId?: string;
+
+  @property({ type: String })
+  itemType: Crawl["type"] = null;
 
   @queryAssignedElements({ selector: "btrix-crawl-list-item" })
   listItems!: Array<HTMLElement>;
@@ -521,15 +538,9 @@ export class CrawlList extends LitElement {
         <div class="col">
           <slot name="idCol">${msg("Name")}</slot>
         </div>
-        <div class="col">
-          ${this.artifactType === "upload" ? msg("Uploaded") : msg("Finished")}
-        </div>
+        <div class="col">${msg("Date Created")}</div>
         <div class="col">${msg("Size")}</div>
-        <div class="col">
-          ${this.artifactType === "upload"
-            ? msg("Uploaded By")
-            : msg("Started By")}
-        </div>
+        <div class="col">${msg("Created By")}</div>
         <div class="col action">
           <span class="srOnly">${msg("Actions")}</span>
         </div>
@@ -540,19 +551,20 @@ export class CrawlList extends LitElement {
   }
 
   private handleSlotchange() {
-    const assignRole = (el: HTMLElement) => {
-      if (!el.attributes.getNamedItem("role")) {
-        el.setAttribute("role", "listitem");
+    const assignProp = (
+      el: HTMLElement,
+      attr: { name: string; value: string }
+    ) => {
+      if (!el.attributes.getNamedItem(attr.name)) {
+        el.setAttribute(attr.name, attr.value);
       }
     };
-    let mapFn = assignRole;
-    if (this.baseUrl) {
-      mapFn = (el) => {
-        assignRole(el);
-        el.setAttribute("baseUrl", this.baseUrl!);
-      };
-    }
 
-    this.listItems.forEach(mapFn);
+    this.listItems.forEach((el) => {
+      assignProp(el, { name: "role", value: "listitem" });
+      assignProp(el, { name: "baseUrl", value: this.baseUrl || "" });
+      assignProp(el, { name: "collectionId", value: this.collectionId || "" });
+      assignProp(el, { name: "workflowId", value: this.workflowId || "" });
+    });
   }
 }

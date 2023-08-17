@@ -5,10 +5,12 @@ import uuid
 import os
 from datetime import timedelta
 from typing import Optional, List, Union
+import urllib.parse
+import contextlib
 
 from pydantic import UUID4
 from fastapi import HTTPException, Depends
-from redis import asyncio as aioredis, exceptions
+from redis import exceptions
 
 from .models import (
     CrawlFile,
@@ -36,6 +38,8 @@ FAILED_STATES = ("canceled", "failed")
 SUCCESSFUL_STATES = ("complete", "partial_complete")
 
 RUNNING_AND_STARTING_STATES = (*STARTING_STATES, *RUNNING_STATES)
+
+RUNNING_AND_STARTING_ONLY = ("starting", *RUNNING_STATES)
 
 NON_RUNNING_STATES = (*FAILED_STATES, *SUCCESSFUL_STATES)
 
@@ -194,16 +198,11 @@ class BaseCrawlOps:
         config = await self.crawl_configs.get_crawl_config(
             crawl.cid, org, active_only=False
         )
-
-        if config:
-            if not crawl.name:
-                crawl.name = config.name
-
-            if config.config.seeds:
-                if add_first_seed:
-                    first_seed = config.config.seeds[0]
-                    crawl.firstSeed = first_seed.url
-                crawl.seedCount = len(config.config.seeds)
+        if config and config.config.seeds:
+            if add_first_seed:
+                first_seed = config.config.seeds[0]
+                crawl.firstSeed = first_seed.url
+            crawl.seedCount = len(config.config.seeds)
 
         if hasattr(crawl, "profileid") and crawl.profileid:
             crawl.profileName = await self.crawl_configs.profiles.get_profile_name(
@@ -218,8 +217,8 @@ class BaseCrawlOps:
         # more responsive, saves db update in operator
         if crawl.state in RUNNING_STATES:
             try:
-                redis = await self.get_redis(crawl.id)
-                crawl.stats = await get_redis_crawl_stats(redis, crawl.id)
+                async with self.get_redis(crawl.id) as redis:
+                    crawl.stats = await get_redis_crawl_stats(redis, crawl.id)
             # redis not available, ignore
             except exceptions.ConnectionError:
                 pass
@@ -283,13 +282,17 @@ class BaseCrawlOps:
         for update in updates:
             await self.crawls.find_one_and_update(*update)
 
+    @contextlib.asynccontextmanager
     async def get_redis(self, crawl_id):
         """get redis url for crawl id"""
         redis_url = self.crawl_manager.get_redis_url(crawl_id)
 
-        return await aioredis.from_url(
-            redis_url, encoding="utf-8", decode_responses=True
-        )
+        redis = await self.crawl_manager.get_redis_client(redis_url)
+
+        try:
+            yield redis
+        finally:
+            await redis.close()
 
     async def add_to_collection(
         self, crawl_ids: List[uuid.UUID], collection_id: uuid.UUID, org: Organization
@@ -325,7 +328,7 @@ class BaseCrawlOps:
             {"$pull": {"collections": collection_id}},
         )
 
-    # pylint: disable=too-many-branches
+    # pylint: disable=too-many-branches, invalid-name
     async def list_all_base_crawls(
         self,
         org: Optional[Organization] = None,
@@ -334,12 +337,14 @@ class BaseCrawlOps:
         description: str = None,
         collection_id: str = None,
         states: Optional[List[str]] = None,
+        first_seed: Optional[str] = None,
+        type_: Optional[str] = None,
+        cid: Optional[UUID4] = None,
         cls_type: Union[CrawlOut, CrawlOutWithResources] = CrawlOut,
         page_size: int = DEFAULT_PAGE_SIZE,
         page: int = 1,
         sort_by: str = None,
         sort_direction: int = -1,
-        type_=None,
     ):
         """List crawls of all types from the db"""
         # Zero-index page for query
@@ -365,13 +370,24 @@ class BaseCrawlOps:
             # validated_states = [value for value in state if value in ALL_CRAWL_STATES]
             query["state"] = {"$in": states}
 
-        aggregate = [{"$match": query}, {"$unset": "errors"}]
+        if cid:
+            query["cid"] = cid
+
+        aggregate = [
+            {"$match": query},
+            {"$set": {"firstSeedObject": {"$arrayElemAt": ["$config.seeds", 0]}}},
+            {"$set": {"firstSeed": "$firstSeedObject.url"}},
+            {"$unset": ["firstSeedObject", "errors"]},
+        ]
 
         if not resources:
             aggregate.extend([{"$unset": ["files"]}])
 
         if name:
             aggregate.extend([{"$match": {"name": name}}])
+
+        if first_seed:
+            aggregate.extend([{"$match": {"firstSeed": first_seed}}])
 
         if description:
             aggregate.extend([{"$match": {"description": description}}])
@@ -380,7 +396,7 @@ class BaseCrawlOps:
             aggregate.extend([{"$match": {"collections": {"$in": [collection_id]}}}])
 
         if sort_by:
-            if sort_by not in ("started", "finished"):
+            if sort_by not in ("started", "finished", "fileSize"):
                 raise HTTPException(status_code=400, detail="invalid_sort_by")
             if sort_direction not in (1, -1):
                 raise HTTPException(status_code=400, detail="invalid_sort_direction")
@@ -445,13 +461,47 @@ class BaseCrawlOps:
 
         return {"deleted": True}
 
+    async def get_all_crawl_search_values(
+        self, org: Organization, type_: Optional[str] = None
+    ):
+        """List unique names, first seeds, and descriptions from all captures in org"""
+        match_query = {"oid": org.id}
+        if type_:
+            match_query["type"] = type_
+
+        names = await self.crawls.distinct("name", match_query)
+        descriptions = await self.crawls.distinct("description", match_query)
+        cids = (
+            await self.crawls.distinct("cid", match_query)
+            if not type_ or type_ == "crawl"
+            else []
+        )
+
+        # Remove empty strings
+        names = [name for name in names if name]
+        descriptions = [description for description in descriptions if description]
+
+        first_seeds = set()
+        for cid in cids:
+            if not cid:
+                continue
+            config = await self.crawl_configs.get_crawl_config(cid, org)
+            first_seed = config.config.seeds[0]
+            first_seeds.add(first_seed.url)
+
+        return {
+            "names": names,
+            "descriptions": descriptions,
+            "firstSeeds": list(first_seeds),
+        }
+
 
 # ============================================================================
 def init_base_crawls_api(
     app, mdb, users, crawl_manager, crawl_config_ops, orgs, user_dep
 ):
     """base crawls api"""
-    # pylint: disable=invalid-name, duplicate-code, too-many-arguments
+    # pylint: disable=invalid-name, duplicate-code, too-many-arguments, too-many-locals
 
     ops = BaseCrawlOps(mdb, users, crawl_config_ops, crawl_manager)
 
@@ -470,12 +520,28 @@ def init_base_crawls_api(
         userid: Optional[UUID4] = None,
         name: Optional[str] = None,
         state: Optional[str] = None,
+        firstSeed: Optional[str] = None,
         description: Optional[str] = None,
         collectionId: Optional[UUID4] = None,
+        crawlType: Optional[str] = None,
+        cid: Optional[UUID4] = None,
         sortBy: Optional[str] = "finished",
         sortDirection: Optional[int] = -1,
     ):
         states = state.split(",") if state else None
+
+        if firstSeed:
+            firstSeed = urllib.parse.unquote(firstSeed)
+
+        if name:
+            name = urllib.parse.unquote(name)
+
+        if description:
+            description = urllib.parse.unquote(description)
+
+        if crawlType and crawlType not in ("crawl", "upload"):
+            raise HTTPException(status_code=400, detail="invalid_crawl_type")
+
         crawls, total = await ops.list_all_base_crawls(
             org,
             userid=userid,
@@ -483,12 +549,25 @@ def init_base_crawls_api(
             description=description,
             collection_id=collectionId,
             states=states,
+            first_seed=firstSeed,
+            type_=crawlType,
+            cid=cid,
             page_size=pageSize,
             page=page,
             sort_by=sortBy,
             sort_direction=sortDirection,
         )
         return paginated_format(crawls, total, page, pageSize)
+
+    @app.get("/orgs/{oid}/all-crawls/search-values", tags=["all-crawls"])
+    async def get_all_crawls_search_values(
+        org: Organization = Depends(org_viewer_dep),
+        crawlType: Optional[str] = None,
+    ):
+        if crawlType and crawlType not in ("crawl", "upload"):
+            raise HTTPException(status_code=400, detail="invalid_crawl_type")
+
+        return await ops.get_all_crawl_search_values(org, type_=crawlType)
 
     @app.get(
         "/orgs/{oid}/all-crawls/{crawl_id}",

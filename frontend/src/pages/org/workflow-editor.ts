@@ -536,7 +536,7 @@ export class CrawlConfigEditor extends LiteElement {
       browserSettings: msg("Browser Settings"),
       crawlScheduling: msg("Scheduling"),
       crawlMetadata: msg("Metadata"),
-      confirmSettings: msg("Review Config"),
+      confirmSettings: msg("Review Settings"),
     };
 
     return html`
@@ -1118,15 +1118,14 @@ https://example.net`}
         false
       )}
       ${this.renderFormCol(html`
-        <sl-checkbox
-          name="useSitemap"
-          ?checked=${this.formState.useSitemap}
-        >
+        <sl-checkbox name="useSitemap" ?checked=${this.formState.useSitemap}>
           ${msg("Check For Sitemap")}
         </sl-checkbox>
       `)}
       ${this.renderHelpTextCol(
-        msg(`If checked, the crawler will check for a sitemap at /sitemap.xml and use it to discover pages to crawl if present.`),
+        msg(
+          `If checked, the crawler will check for a sitemap at /sitemap.xml and use it to discover pages to crawl if present.`
+        ),
         false
       )}
       <div class="col-span-5">
@@ -1663,7 +1662,7 @@ https://archiveweb.page/images/${"logo.svg"}`}
       )}
       ${this.renderHelpTextCol(
         msg(`Create or assign this crawl (and its outputs) to one or more tags
-        to help organize your archived data.`)
+        to help organize your archived items.`)
       )}
       ${this.renderFormCol(
         html`
@@ -1706,8 +1705,8 @@ https://archiveweb.page/images/${"logo.svg"}`}
         ? msg(
             "There are issues with this Workflow. Please go through previous steps and fix all issues to continue."
           )
-        : msg(html`There is an issue with this Workflow:<br /><br />Crawl URL(s)
-            required in
+        : msg(html`There is an issue with this Crawl Workflow:<br /><br />Crawl
+            URL(s) required in
             <a href="${crawlSetupUrl}" class="bold underline hover:no-underline"
               >Crawl Setup</a
             >. <br /><br />

@@ -23,14 +23,14 @@ import { isActive, activeCrawlStates } from "../../utils/crawler";
 type Crawls = APIPaginatedList & {
   items: Crawl[];
 };
-type SearchFields = "name" | "firstSeed" | "cid";
+type SearchFields = "name" | "firstSeed";
 type SearchResult = {
   item: {
     key: SearchFields;
     value: string;
   };
 };
-type SortField = "started" | "finished" | "firstSeed" | "fileSize";
+type SortField = "finished" | "fileSize";
 type SortDirection = "asc" | "desc";
 
 const ABORT_REASON_THROTTLE = "throttled";
@@ -43,19 +43,11 @@ const sortableFields: Record<
   { label: string; defaultDirection?: SortDirection }
 > = {
   finished: {
-    label: msg("Date Finished"),
-    defaultDirection: "desc",
-  },
-  started: {
-    label: msg("Date Started"),
-    defaultDirection: "desc",
-  },
-  firstSeed: {
-    label: msg("Crawl Start URL"),
+    label: msg("Date Created"),
     defaultDirection: "desc",
   },
   fileSize: {
-    label: msg("File Size"),
+    label: msg("Size"),
     defaultDirection: "desc",
   },
 };
@@ -68,7 +60,7 @@ const finishedCrawlStates: CrawlState[] = [
 /**
  * Usage:
  * ```ts
- * <btrix-crawls-list crawlsBaseUrl="/crawls"></btrix-crawls-list>
+ * <btrix-crawls-list></btrix-crawls-list>
  * ```
  */
 @localized()
@@ -76,7 +68,6 @@ export class CrawlsList extends LiteElement {
   static FieldLabels: Record<SearchFields, string> = {
     name: msg("Name"),
     firstSeed: msg("Crawl Start URL"),
-    cid: msg("Workflow ID"),
   };
 
   @property({ type: Object })
@@ -91,16 +82,8 @@ export class CrawlsList extends LiteElement {
   @property({ type: Boolean })
   isCrawler!: boolean;
 
-  // e.g. `/org/${this.orgId}/crawls`
   @property({ type: String })
-  crawlsBaseUrl!: string;
-
-  // e.g. `/org/${this.orgId}/crawls`
-  @property({ type: String })
-  crawlsAPIBaseUrl?: string;
-
-  @property({ type: String })
-  artifactType: Crawl["type"] = null;
+  itemType: Crawl["type"] = null;
 
   /**
    * Fetch & refetch data when needed,
@@ -110,7 +93,7 @@ export class CrawlsList extends LiteElement {
   shouldFetch?: boolean;
 
   @state()
-  private crawls?: Crawls;
+  private archivedItems?: Crawls;
 
   @state()
   private orderBy: {
@@ -134,10 +117,10 @@ export class CrawlsList extends LiteElement {
   private searchResultsOpen = false;
 
   @state()
-  private crawlToEdit: Crawl | null = null;
+  private itemToEdit: Crawl | null = null;
 
   @state()
-  private isEditingCrawl = false;
+  private isEditingItem = false;
 
   @state()
   private isUploadingArchive = false;
@@ -153,7 +136,7 @@ export class CrawlsList extends LiteElement {
   });
 
   // Use to cancel requests
-  private getCrawlsController: AbortController | null = null;
+  private getArchivedItemsController: AbortController | null = null;
 
   private get hasSearchStr() {
     return this.searchByValue.length >= MIN_SEARCH_LENGTH;
@@ -175,32 +158,27 @@ export class CrawlsList extends LiteElement {
   protected willUpdate(changedProperties: Map<string, any>) {
     if (
       changedProperties.has("shouldFetch") ||
-      changedProperties.get("crawlsBaseUrl") ||
-      changedProperties.get("crawlsAPIBaseUrl") ||
       changedProperties.has("filterByCurrentUser") ||
       changedProperties.has("filterBy") ||
       changedProperties.has("orderBy") ||
-      changedProperties.has("artifactType")
+      changedProperties.has("itemType")
     ) {
       if (this.shouldFetch) {
-        if (!this.crawlsBaseUrl) {
-          throw new Error("Crawls base URL not defined");
-        }
-        if (changedProperties.has("artifactType")) {
+        if (changedProperties.has("itemType")) {
           this.filterBy = {};
           this.orderBy = {
             field: "finished",
             direction: sortableFields["finished"].defaultDirection!,
           };
-          this.crawls = undefined;
+          this.archivedItems = undefined;
         }
 
-        this.fetchCrawls({
+        this.fetchArchivedItems({
           page: 1,
           pageSize: INITIAL_PAGE_SIZE,
         });
       } else {
-        this.cancelInProgressGetCrawls();
+        this.cancelInProgressGetArchivedItems();
       }
 
       if (changedProperties.has("filterByCurrentUser")) {
@@ -211,36 +189,33 @@ export class CrawlsList extends LiteElement {
       }
     }
 
-    if (
-      changedProperties.has("crawlsBaseUrl") ||
-      changedProperties.has("crawlsAPIBaseUrl")
-    ) {
+    if (changedProperties.has("itemType")) {
       this.fetchConfigSearchValues();
     }
   }
 
   disconnectedCallback(): void {
-    this.cancelInProgressGetCrawls();
+    this.cancelInProgressGetArchivedItems();
     super.disconnectedCallback();
   }
 
   render() {
     const listTypes: {
-      artifactType: Crawl["type"];
+      itemType: Crawl["type"];
       label: string;
       icon?: string;
     }[] = [
       {
-        artifactType: null,
+        itemType: null,
         label: msg("All"),
       },
       {
-        artifactType: "crawl",
+        itemType: "crawl",
         icon: "gear-wide-connected",
         label: msg("Crawls"),
       },
       {
-        artifactType: "upload",
+        itemType: "upload",
         icon: "upload",
         label: msg("Uploads"),
       },
@@ -249,9 +224,11 @@ export class CrawlsList extends LiteElement {
     return html`
       <main>
         <header class="contents">
-          <div class="flex justify-between w-full pb-4 mb-3 border-b">
-            <h1 class="text-xl font-semibold h-8">
-              ${msg("All Archived Data")}
+          <div class="md:flex items-center gap-2 pb-3 mb-3 border-b">
+            <h1
+              class="flex-1 min-w-0 text-xl font-semibold leading-7 truncate mb-2 md:mb-0"
+            >
+              ${msg("Archived Items")}
             </h1>
             ${when(
               this.isCrawler,
@@ -261,20 +238,20 @@ export class CrawlsList extends LiteElement {
                   @click=${() => (this.isUploadingArchive = true)}
                 >
                   <sl-icon slot="prefix" name="upload"></sl-icon>
-                  ${msg("Upload Archive")}
+                  ${msg("Upload WACZ")}
                 </sl-button>
               `
             )}
           </div>
           <div class="flex gap-2 mb-3">
-            ${listTypes.map(({ label, artifactType, icon }) => {
-              const isSelected = artifactType === this.artifactType;
+            ${listTypes.map(({ label, itemType, icon }) => {
+              const isSelected = itemType === this.itemType;
               return html` <btrix-button
                 variant=${isSelected ? "primary" : "neutral"}
                 ?raised=${isSelected}
                 aria-selected="${isSelected}"
-                href=${`${this.crawlsBaseUrl}?artifactType=${
-                  artifactType || ""
+                href=${`/orgs/${this.orgId}/items${
+                  itemType ? `/${itemType}` : ""
                 }`}
                 @click=${this.navLink}
               >
@@ -291,14 +268,14 @@ export class CrawlsList extends LiteElement {
         </header>
 
         ${when(
-          this.crawls,
+          this.archivedItems,
           () => {
-            const { items, page, total, pageSize } = this.crawls!;
+            const { items, page, total, pageSize } = this.archivedItems!;
             const hasCrawlItems = items.length;
             return html`
               <section>
                 ${hasCrawlItems
-                  ? this.renderCrawlList()
+                  ? this.renderArchivedItemList()
                   : this.renderEmptyState()}
               </section>
               ${when(
@@ -310,7 +287,7 @@ export class CrawlsList extends LiteElement {
                       totalCount=${total}
                       size=${pageSize}
                       @page-change=${async (e: PageChangeEvent) => {
-                        await this.fetchCrawls({
+                        await this.fetchArchivedItems({
                           page: e.detail.page,
                         });
 
@@ -340,8 +317,8 @@ export class CrawlsList extends LiteElement {
             ?open=${this.isUploadingArchive}
             @request-close=${() => (this.isUploadingArchive = false)}
             @uploaded=${() => {
-              if (this.artifactType !== "crawl") {
-                this.fetchCrawls({
+              if (this.itemType !== "crawl") {
+                this.fetchArchivedItems({
                   page: 1,
                 });
               }
@@ -353,10 +330,7 @@ export class CrawlsList extends LiteElement {
   }
 
   private renderControls() {
-    const viewPlaceholder =
-      this.artifactType === "upload"
-        ? msg("All Uploaded")
-        : msg("All Finished");
+    const viewPlaceholder = msg("Any");
     const viewOptions = finishedCrawlStates;
 
     return html`
@@ -367,7 +341,7 @@ export class CrawlsList extends LiteElement {
           ${this.renderSearch()}
         </div>
         <div class="flex items-center">
-          <div class="text-neutral-500 mx-2">${msg("View:")}</div>
+          <div class="text-neutral-500 mx-2">${msg("Status:")}</div>
           <sl-select
             id="stateSelect"
             class="flex-1 md:w-[14.5rem]"
@@ -415,23 +389,11 @@ export class CrawlsList extends LiteElement {
   }
 
   private renderSortControl() {
-    let options: any;
-    if (this.artifactType === "upload") {
-      options = html`
-        <sl-option value="finished">${msg("Date Uploaded")}</sl-option>
-      `;
-    } else if (this.artifactType === "crawl") {
-      options = Object.entries(sortableFields).map(
-        ([value, { label }]) => html`
-          <sl-option value=${value}>${label}</sl-option>
-        `
-      );
-    } else {
-      options = html`
-        <sl-option value="finished">${sortableFields.finished.label}</sl-option>
-        <sl-option value="started">${sortableFields.started.label}</sl-option>
-      `;
-    }
+    let options = Object.entries(sortableFields).map(
+      ([value, { label }]) => html`
+        <sl-option value=${value}>${label}</sl-option>
+      `
+    );
     return html`
       <sl-select
         class="flex-1 md:w-[10rem]"
@@ -484,13 +446,15 @@ export class CrawlsList extends LiteElement {
       >
         <sl-input
           size="small"
-          placeholder=${msg("Filter by Name, Crawl Start URL, or Workflow ID")}
+          placeholder=${this.itemType === "upload"
+            ? msg("Search by name")
+            : msg("Search by name or Crawl Start URL")}
           clearable
           value=${this.searchByValue}
           @sl-clear=${() => {
             this.searchResultsOpen = false;
             this.onSearchInput.cancel();
-            const { name, firstSeed, cid, ...otherFilters } = this.filterBy;
+            const { name, firstSeed, ...otherFilters } = this.filterBy;
             this.filterBy = otherFilters;
           }}
           @sl-input=${this.onSearchInput}
@@ -519,7 +483,7 @@ export class CrawlsList extends LiteElement {
     if (!this.hasSearchStr) {
       return html`
         <sl-menu-item slot="menu-item" disabled
-          >${msg("Start typing to view crawl filters.")}</sl-menu-item
+          >${msg("Start typing to view filters.")}</sl-menu-item
         >
       `;
     }
@@ -528,7 +492,7 @@ export class CrawlsList extends LiteElement {
     if (!searchResults.length) {
       return html`
         <sl-menu-item slot="menu-item" disabled
-          >${msg("No matching crawls found.")}</sl-menu-item
+          >${msg("No matching items found.")}</sl-menu-item
         >
       `;
     }
@@ -551,43 +515,43 @@ export class CrawlsList extends LiteElement {
     `;
   }
 
-  private renderCrawlList() {
-    if (!this.crawls) return;
+  private renderArchivedItemList() {
+    if (!this.archivedItems) return;
 
     return html`
       <btrix-crawl-list
         baseUrl=""
-        artifactType=${ifDefined(this.artifactType || undefined)}
+        itemType=${ifDefined(this.itemType || undefined)}
       >
-        ${this.crawls.items.map(this.renderCrawlItem)}
+        ${this.archivedItems.items.map(this.renderArchivedItem)}
       </btrix-crawl-list>
 
       <btrix-crawl-metadata-editor
         .authState=${this.authState}
-        .crawl=${this.crawlToEdit}
-        ?open=${this.isEditingCrawl}
-        @request-close=${() => (this.isEditingCrawl = false)}
+        .crawl=${this.itemToEdit}
+        ?open=${this.isEditingItem}
+        @request-close=${() => (this.isEditingItem = false)}
         @updated=${
-          /* TODO fetch current page or single crawl */ this.fetchCrawls
+          /* TODO fetch current page or single crawl */ this.fetchArchivedItems
         }
       ></btrix-crawl-metadata-editor>
     `;
   }
 
-  private renderCrawlItem = (crawl: Crawl) =>
+  private renderArchivedItem = (item: Crawl) =>
     html`
-      <btrix-crawl-list-item .crawl=${crawl}>
+      <btrix-crawl-list-item .crawl=${item}>
         <sl-menu slot="menu">
           ${when(
             this.isCrawler,
-            this.crawlerMenuItemsRenderer(crawl),
+            this.crawlerMenuItemsRenderer(item),
             () => html`
               <sl-menu-item
                 @click=${() =>
                   this.navTo(
-                    `/orgs/${crawl.oid}/artifacts/${
-                      crawl.type === "upload" ? "upload" : "crawl"
-                    }/${crawl.id}`
+                    `/orgs/${item.oid}/crawls/${
+                      item.type === "upload" ? "upload" : "crawl"
+                    }/${item.id}`
                   )}
               >
                 ${msg("View Crawl Details")}
@@ -598,7 +562,7 @@ export class CrawlsList extends LiteElement {
       </btrix-crawl-list-item>
     `;
 
-  private crawlerMenuItemsRenderer = (crawl: Crawl) => () =>
+  private crawlerMenuItemsRenderer = (item: Crawl) => () =>
     // HACK shoelace doesn't current have a way to override non-hover
     // color without resetting the --sl-color-neutral-700 variable
     html`
@@ -607,8 +571,8 @@ export class CrawlsList extends LiteElement {
         () => html`
           <sl-menu-item
             @click=${() => {
-              this.crawlToEdit = crawl;
-              this.isEditingCrawl = true;
+              this.itemToEdit = item;
+              this.isEditingItem = true;
             }}
           >
             <sl-icon name="pencil" slot="prefix"></sl-icon>
@@ -618,44 +582,42 @@ export class CrawlsList extends LiteElement {
         `
       )}
       ${when(
-        crawl.type === "crawl",
+        item.type === "crawl",
         () => html`
           <sl-menu-item
             @click=${() =>
-              this.navTo(`/orgs/${crawl.oid}/workflows/crawl/${crawl.cid}`)}
+              this.navTo(`/orgs/${item.oid}/workflows/crawl/${item.cid}`)}
           >
             <sl-icon name="arrow-return-right" slot="prefix"></sl-icon>
             ${msg("Go to Workflow")}
           </sl-menu-item>
-          <sl-menu-item @click=${() => CopyButton.copyToClipboard(crawl.cid)}>
+          <sl-menu-item @click=${() => CopyButton.copyToClipboard(item.cid)}>
             <sl-icon name="copy-code" library="app" slot="prefix"></sl-icon>
             ${msg("Copy Workflow ID")}
           </sl-menu-item>
-          <sl-menu-item @click=${() => CopyButton.copyToClipboard(crawl.id)}>
+          <sl-menu-item @click=${() => CopyButton.copyToClipboard(item.id)}>
             <sl-icon name="copy-code" library="app" slot="prefix"></sl-icon>
             ${msg("Copy Crawl ID")}
           </sl-menu-item>
         `
       )}
       <sl-menu-item
-        @click=${() => CopyButton.copyToClipboard(crawl.tags.join(", "))}
-        ?disabled=${!crawl.tags.length}
+        @click=${() => CopyButton.copyToClipboard(item.tags.join(", "))}
+        ?disabled=${!item.tags.length}
       >
         <sl-icon name="tags" slot="prefix"></sl-icon>
         ${msg("Copy Tags")}
       </sl-menu-item>
       ${when(
-        this.isCrawler && !isActive(crawl.state),
+        this.isCrawler && !isActive(item.state),
         () => html`
           <sl-divider></sl-divider>
           <sl-menu-item
             style="--sl-color-neutral-700: var(--danger)"
-            @click=${() => this.deleteCrawl(crawl)}
+            @click=${() => this.deleteItem(item)}
           >
             <sl-icon name="trash3" slot="prefix"></sl-icon>
-            ${crawl.type === "upload"
-              ? msg("Delete Upload")
-              : msg("Delete Crawl")}
+            ${msg("Delete Item")}
           </sl-menu-item>
         `
       )}
@@ -673,7 +635,7 @@ export class CrawlsList extends LiteElement {
         <div class="border rounded-lg bg-neutral-50 p-4">
           <p class="text-center">
             <span class="text-neutral-400"
-              >${msg("No matching crawls found.")}</span
+              >${msg("No matching items found.")}</span
             >
             <button
               class="text-neutral-500 font-medium underline hover:no-underline"
@@ -696,7 +658,7 @@ export class CrawlsList extends LiteElement {
       `;
     }
 
-    if (this.crawls?.page && this.crawls?.page > 1) {
+    if (this.archivedItems?.page && this.archivedItems?.page > 1) {
       return html`
         <div class="border-t border-b py-5">
           <p class="text-center text-neutral-500">
@@ -709,9 +671,7 @@ export class CrawlsList extends LiteElement {
     return html`
       <div class="border-t border-b py-5">
         <p class="text-center text-neutral-500">
-          ${this.artifactType === "upload"
-            ? msg("No uploads yet.")
-            : msg("No crawls yet.")}
+          ${msg("No archived items yet.")}
         </p>
       </div>
     `;
@@ -736,37 +696,20 @@ export class CrawlsList extends LiteElement {
   }) as any;
 
   /**
-   * Fetch crawls and update internal state
+   * Fetch archived items and update internal state
    */
-  private async fetchCrawls(params?: APIPaginationQuery): Promise<void> {
+  private async fetchArchivedItems(params?: APIPaginationQuery): Promise<void> {
     if (!this.shouldFetch) return;
 
-    this.cancelInProgressGetCrawls();
+    this.cancelInProgressGetArchivedItems();
     try {
-      let crawls = this.crawls;
-      switch (this.artifactType) {
-        case "crawl":
-          crawls = await this.getCrawls({
-            ...params,
-            state: this.filterBy.state || finishedCrawlStates,
-          });
-          break;
-        case "upload":
-          crawls = await this.getUploads(params);
-          break;
-        default:
-          crawls = await this.getAllCrawls(params);
-          break;
-          break;
-      }
-
-      this.crawls = crawls;
+      this.archivedItems = await this.getArchivedItems(params);
     } catch (e: any) {
       if (e === ABORT_REASON_THROTTLE) {
-        console.debug("Fetch crawls aborted to throttle");
+        console.debug("Fetch archived items aborted to throttle");
       } else {
         this.notify({
-          message: msg("Sorry, couldn't retrieve crawls at this time."),
+          message: msg("Sorry, couldn't retrieve archived items at this time."),
           variant: "danger",
           icon: "exclamation-octagon",
         });
@@ -774,116 +717,63 @@ export class CrawlsList extends LiteElement {
     }
   }
 
-  private cancelInProgressGetCrawls() {
-    if (this.getCrawlsController) {
-      this.getCrawlsController.abort(ABORT_REASON_THROTTLE);
-      this.getCrawlsController = null;
+  private cancelInProgressGetArchivedItems() {
+    if (this.getArchivedItemsController) {
+      this.getArchivedItemsController.abort(ABORT_REASON_THROTTLE);
+      this.getArchivedItemsController = null;
     }
   }
 
-  private async getCrawls(
+  private async getArchivedItems(
     queryParams?: APIPaginationQuery & { state?: CrawlState[] }
   ): Promise<Crawls> {
     const query = queryString.stringify(
       {
         ...this.filterBy,
-        state: queryParams?.state,
-        page: queryParams?.page || this.crawls?.page || 1,
+        state: this.filterBy.state?.length
+          ? this.filterBy.state
+          : finishedCrawlStates,
+        page: queryParams?.page || this.archivedItems?.page || 1,
         pageSize:
-          queryParams?.pageSize || this.crawls?.pageSize || INITIAL_PAGE_SIZE,
+          queryParams?.pageSize ||
+          this.archivedItems?.pageSize ||
+          INITIAL_PAGE_SIZE,
         userid: this.filterByCurrentUser ? this.userId : undefined,
         sortBy: this.orderBy.field,
         sortDirection: this.orderBy.direction === "desc" ? -1 : 1,
+        crawlType: this.itemType,
       },
       {
         arrayFormat: "comma",
       }
     );
 
-    this.getCrawlsController = new AbortController();
-    const data = await this.apiFetch(
-      `${this.crawlsAPIBaseUrl || this.crawlsBaseUrl}?${query}`,
-      this.authState!,
-      {
-        signal: this.getCrawlsController.signal,
-      }
-    );
-
-    this.getCrawlsController = null;
-
-    return data;
-  }
-
-  private async getAllCrawls(
-    queryParams?: APIPaginationQuery
-  ): Promise<Crawls> {
-    const query = queryString.stringify(
-      {
-        state: this.filterBy.state || finishedCrawlStates,
-        name: this.filterBy.name,
-        page: queryParams?.page || this.crawls?.page || 1,
-        pageSize:
-          queryParams?.pageSize || this.crawls?.pageSize || INITIAL_PAGE_SIZE,
-        userid: this.filterByCurrentUser ? this.userId : undefined,
-        sortBy: this.orderBy.field,
-        sortDirection: this.orderBy.direction === "desc" ? -1 : 1,
-      },
-      {
-        arrayFormat: "comma",
-      }
-    );
-
-    this.getCrawlsController = new AbortController();
+    this.getArchivedItemsController = new AbortController();
     const data = await this.apiFetch(
       `/orgs/${this.orgId}/all-crawls?${query}`,
       this.authState!,
       {
-        signal: this.getCrawlsController.signal,
+        signal: this.getArchivedItemsController.signal,
       }
     );
 
-    this.getCrawlsController = null;
-
-    return data;
-  }
-
-  private async getUploads(queryParams?: APIPaginationQuery): Promise<Crawls> {
-    const query = queryString.stringify(
-      {
-        name: this.filterBy.name,
-        page: queryParams?.page || this.crawls?.page || 1,
-        pageSize:
-          queryParams?.pageSize || this.crawls?.pageSize || INITIAL_PAGE_SIZE,
-        userid: this.filterByCurrentUser ? this.userId : undefined,
-        sortBy: this.orderBy.field,
-        sortDirection: this.orderBy.direction === "desc" ? -1 : 1,
-      },
-      {
-        arrayFormat: "comma",
-      }
-    );
-
-    this.getCrawlsController = new AbortController();
-    const data = await this.apiFetch(
-      `/orgs/${this.orgId}/uploads?${query}`,
-      this.authState!,
-      {
-        signal: this.getCrawlsController.signal,
-      }
-    );
-
-    this.getCrawlsController = null;
+    this.getArchivedItemsController = null;
 
     return data;
   }
 
   private async fetchConfigSearchValues() {
-    const oid = (this.crawlsAPIBaseUrl || this.crawlsBaseUrl)
-      .split("/orgs/")[1]
-      .split("/")[0];
     try {
-      const { names, firstSeeds, workflowIds } = await this.apiFetch(
-        `/orgs/${oid}/crawlconfigs/search-values`,
+      const query = queryString.stringify({
+        crawlType: this.itemType,
+      });
+      const data: {
+        crawlIds: string[];
+        names: string[];
+        descriptions: string[];
+        firstSeeds: string[];
+      } = await this.apiFetch(
+        `/orgs/${this.orgId}/all-crawls/search-values?${query}`,
         this.authState!
       );
 
@@ -895,30 +785,24 @@ export class CrawlsList extends LiteElement {
           value,
         });
       this.fuse.setCollection([
-        ...names.map(toSearchItem("name")),
-        ...firstSeeds.map(toSearchItem("firstSeed")),
-        ...workflowIds.map(toSearchItem("cid")),
+        ...data.names.map(toSearchItem("name")),
+        ...data.firstSeeds.map(toSearchItem("firstSeed")),
       ] as any);
     } catch (e) {
       console.debug(e);
     }
   }
 
-  private async deleteCrawl(crawl: Crawl) {
-    // TODO check if this makes translating entire string difficult:
-    const typeName = crawl.type === "upload" ? msg("upload") : msg("crawl");
-
+  private async deleteItem(item: Crawl) {
     if (
-      !window.confirm(
-        msg(str`Are you sure you want to delete ${typeName} of ${crawl.name}?`)
-      )
+      !window.confirm(msg(str`Are you sure you want to delete ${item.name}?`))
     ) {
       return;
     }
 
     let apiPath;
 
-    switch (this.artifactType) {
+    switch (this.itemType) {
       case "crawl":
         apiPath = "crawls";
         break;
@@ -932,32 +816,32 @@ export class CrawlsList extends LiteElement {
 
     try {
       const data = await this.apiFetch(
-        `/orgs/${crawl.oid}/${apiPath}/delete`,
+        `/orgs/${item.oid}/${apiPath}/delete`,
         this.authState!,
         {
           method: "POST",
           body: JSON.stringify({
-            crawl_ids: [crawl.id],
+            crawl_ids: [item.id],
           }),
         }
       );
 
-      const { items, ...crawlsData } = this.crawls!;
-      this.crawls = {
+      const { items, ...crawlsData } = this.archivedItems!;
+      this.archivedItems = {
         ...crawlsData,
-        items: items.filter((c) => c.id !== crawl.id),
+        items: items.filter((c) => c.id !== item.id),
       };
       this.notify({
-        message: msg(str`Successfully deleted ${typeName}`),
+        message: msg(str`Successfully deleted archived item.`),
         variant: "success",
         icon: "check2-circle",
       });
-      this.fetchCrawls();
+      this.fetchArchivedItems();
     } catch (e: any) {
       this.notify({
         message:
           (e.isApiError && e.message) ||
-          msg(str`Sorry, couldn't run ${typeName} at this time.`),
+          msg(str`Sorry, couldn't delete archived item at this time.`),
         variant: "danger",
         icon: "exclamation-octagon",
       });
@@ -971,29 +855,6 @@ export class CrawlsList extends LiteElement {
     );
 
     return data;
-  }
-
-  /**
-   * Create a new template using existing template data
-   */
-  private async duplicateConfig(crawl: Crawl, workflow: Workflow) {
-    const workflowParams: WorkflowParams = {
-      ...workflow,
-      name: msg(str`${workflow.name} Copy`),
-    };
-
-    this.navTo(
-      `/orgs/${crawl.oid}/workflows?new&jobType=${workflowParams.jobType}`,
-      {
-        workflow: workflowParams,
-      }
-    );
-
-    this.notify({
-      message: msg(str`Copied Workflow to new template.`),
-      variant: "success",
-      icon: "check2-circle",
-    });
   }
 }
 
